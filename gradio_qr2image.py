@@ -26,15 +26,20 @@ ddim_sampler = DDIMSampler(model)
 
 def process(input_image, prompt, a_prompt, n_prompt, num_samples, image_resolution, detect_resolution, ddim_steps, guess_mode, strength, scale, seed, eta):
     with torch.no_grad():
-        input_image = HWC3(input_image)
-        detected_map = apply_uniformer(resize_image(input_image, detect_resolution))
-        img = resize_image(input_image, image_resolution)
-        H, W, C = img.shape
+        QR_VERSION = 5
+        module_size = 20
+        W = H = 512
+        painter = QrPainter('https://panhouse.jp/', QR_VERSION)
+        qrbin = QrImagePrinter.print(painter, point_width=1)
+        qrbin = np.array(qrbin.convert('L'))
+        qrbin = qrbin.repeat(module_size,axis=0).repeat(module_size, axis=1)
+        qrbin = cv2.resize(qrbin, (W, H), interpolation=cv2.INTER_NEAREST)
 
-        detected_map = cv2.resize(detected_map, (W, H), interpolation=cv2.INTER_NEAREST)
-        cv2.imwrite('seg.jpg', detected_map)
+        qr_anno = np.zeros((qrbin.shape[0], qrbin.shape[1], 3) )
+        qr_anno[qrbin == 255] = np.array([180, 120, 120])
+        qr_anno[qrbin == 0] = np.array([0, 0, 255])
 
-        control = torch.from_numpy(detected_map.copy()).float().cuda() / 255.0
+        control = torch.from_numpy(qr_anno.copy()).float().cuda() / 255.0
         control = torch.stack([control for _ in range(num_samples)], dim=0)
         control = einops.rearrange(control, 'b h w c -> b c h w').clone()
 
@@ -65,7 +70,10 @@ def process(input_image, prompt, a_prompt, n_prompt, num_samples, image_resoluti
         x_samples = (einops.rearrange(x_samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().clip(0, 255).astype(np.uint8)
 
         results = [x_samples[i] for i in range(num_samples)]
-    return [detected_map] + results
+        for i, result in enumerate(results):
+            cv2.imwrite(f'r{i}.jpg', result)
+        cv2.imwrite('anno.jpg', qr_anno)
+    return [qr_anno] + results
 
 
 block = gr.Blocks().queue()
